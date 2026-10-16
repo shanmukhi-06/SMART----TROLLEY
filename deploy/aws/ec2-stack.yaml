@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Smart Trolley cloud app on a single EC2 instance (Docker Compose + Caddy TLS).
+  This is the prototype-friendly path: one box, real HTTPS, WebSockets that just
+  work, and about the cost of a couple of coffees a month on t4g.small.
+  For a production/multi-store setup see deploy/DEPLOY.md (ECS Fargate + ALB + RDS).
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 key pair, for SSH access.
+
+  InstanceType:
+    Type: String
+    Default: t4g.small
+    AllowedValues: [t4g.small, t4g.medium, t3.small, t3.medium]
+    Description: t4g.* are Graviton (arm64) and cheaper; t3.* are x86_64.
+
+  DomainName:
+    Type: String
+    Default: ""
+    Description: >
+      DNS name you will point at this instance's Elastic IP (e.g.
+      trolley.example.com). Leave blank to run plain HTTP on port 8000 only.
+
+  AcmeEmail:
+    Type: String
+    Default: ""
+    Description: Email for Let's Encrypt expiry notices (required with DomainName).
+
+  SshCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: >
+      CIDR allowed to SSH in. CHANGE THIS to your own IP/32 — the default lets
+      the whole internet reach port 22.
+    AllowedPattern: ^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$
+
+  AdminPin:
+    Type: String
+    Default: "1234"
+    NoEcho: true
+    Description: PIN that unlocks the in-app store settings menu.
+
+  DeviceToken:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    Description: >
+      Shared secret the Raspberry Pi agent presents. Generate with
+      `openssl rand -hex 32` and put the same value in the Pi's .env.
+
+  SecretKey:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    Description: Signs admin session cookies. `openssl rand -hex 32`.
+
+  StoreName:
+    Type: String
+    Default: Smart Mart
+
+  RepoUrl:
+    Type: String
+    Default: ""
+    Description: >
+      Git URL of this project, cloned on boot. Leave blank to upload the code
+      yourself with scp and then run `docker compose up -d`.
+
+Conditions:
+  HasDomain: !Not [!Equals [!Ref DomainName, ""]]
+  HasRepo: !Not [!Equals [!Ref RepoUrl, ""]]
+
+Mappings:
+  # Amazon Linux 2023, resolved via SSM so it stays current.
+  Arch:
+    t4g.small: {Ssm: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}
+    t4g.medium: {Ssm: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}
+    t3.small: {Ssm: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}
+    t3.medium: {Ssm: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}
+
+Resources:
+  TrolleySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Smart Trolley app - HTTP/HTTPS in, SSH restricted
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP (Caddy redirects to HTTPS and serves ACME challenges)
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS + wss for the browser and the Pi agent
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SshCidr
+          Description: SSH
+        - !If
+          - HasDomain
+          - !Ref AWS::NoValue
+          - IpProtocol: tcp
+            FromPort: 8000
+            ToPort: 8000
+            CidrIp: 0.0.0.0/0
+            Description: >-
+              Plain HTTP app port, used only when no domain/TLS is configured.
+              Traffic here is UNENCRYPTED including the device token.
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-sg"
+
+  TrolleyEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eip"
+
+  TrolleyEipAssoc:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt TrolleyEip.AllocationId
+      InstanceId: !Ref TrolleyInstance
+
+  # Lets you use Session Manager instead of SSH if you prefer.
+  TrolleyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  TrolleyProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref TrolleyRole]
+
+  TrolleyInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub
+        - "{{resolve:ssm:${Param}}}"
+        - Param: !FindInMap [Arch, !Ref InstanceType, Ssm]
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref TrolleyProfile
+      SecurityGroupIds: [!GetAtt TrolleySecurityGroup.GroupId]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-app"
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            set -euxo pipefail
+
+            dnf update -y
+            dnf install -y docker git
+            systemctl enable --now docker
+
+            # Compose v2 as a docker CLI plugin
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            ARCH=$(uname -m)
+            curl -fsSL \
+              "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${!ARCH}" \
+              -o /usr/local/lib/docker/cli-plugins/docker-compose
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+            usermod -aG docker ec2-user
+            install -d -o ec2-user -g ec2-user /opt/trolley
+
+            ${CloneCmd}
+
+            cat > /opt/trolley/.env <<'ENVEOF'
+            TROLLEY_DOMAIN=${DomainName}
+            ACME_EMAIL=${AcmeEmail}
+            SECRET_KEY=${SecretKey}
+            DEVICE_TOKEN=${DeviceToken}
+            ADMIN_PIN=${AdminPin}
+            STORE_NAME=${StoreName}
+            POSTGRES_PASSWORD=${SecretKey}
+            ALLOW_SIM_FALLBACK=false
+            PAYMENT_PROVIDER=mock
+            ENVEOF
+            chmod 600 /opt/trolley/.env
+            chown ec2-user:ec2-user /opt/trolley/.env
+
+            if [ -f /opt/trolley/docker-compose.yml ]; then
+              cd /opt/trolley
+              if [ -n "${DomainName}" ]; then
+                sudo -u ec2-user docker compose up -d --build
+              else
+                sudo -u ec2-user docker compose up -d --build app db
+              fi
+            fi
+
+            # Restart the stack on reboot
+            cat > /etc/systemd/system/trolley.service <<'SVCEOF'
+            [Unit]
+            Description=Smart Trolley cloud stack
+            Requires=docker.service
+            After=docker.service network-online.target
+            [Service]
+            Type=oneshot
+            RemainAfterExit=yes
+            WorkingDirectory=/opt/trolley
+            ExecStart=/usr/bin/docker compose up -d
+            ExecStop=/usr/bin/docker compose down
+            [Install]
+            WantedBy=multi-user.target
+            SVCEOF
+            systemctl enable trolley.service
+          - CloneCmd: !If
+              - HasRepo
+              - !Sub "sudo -u ec2-user git clone ${RepoUrl} /opt/trolley || true"
+              - "echo 'No RepoUrl given: copy the project to /opt/trolley yourself.'"
+
+Outputs:
+  PublicIp:
+    Description: Elastic IP — point your DNS A record here.
+    Value: !Ref TrolleyEip
+
+  AppUrl:
+    Description: URL for the trolley kiosk browser and the CLOUD_URL on the Pi.
+    Value: !If
+      - HasDomain
+      - !Sub "https://${DomainName}"
+      - !Sub "http://${TrolleyEip}:8000"
+
+  AgentCommand:
+    Description: Run this on the Raspberry Pi once the stack is up.
+    Value: !If
+      - HasDomain
+      - !Sub "python pi_agent.py --kiosk --cloud https://${DomainName}"
+      - !Sub "python pi_agent.py --kiosk --cloud http://${TrolleyEip}:8000"
+
+  SshCommand:
+    Value: !Sub "ssh -i ${KeyName}.pem ec2-user@${TrolleyEip}"
+
+  NextSteps:
+    Value: >-
+      1) Point DNS at PublicIp.  2) Set the same DEVICE_TOKEN in the Pi's .env.
+      3) Change ADMIN_PIN from the default.  4) Run the AgentCommand on the Pi.

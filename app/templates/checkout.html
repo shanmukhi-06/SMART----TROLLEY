@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Checkout · {{ settings.store_name }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span> {{ settings.store_name }}</div>
+    <a class="badge badge-blue" href="/shop" id="backLink">← Back to basket</a>
+  </header>
+
+  <div class="checkout-wrap">
+    <div class="card qr-card" id="payView">
+      <span class="badge badge-blue">Scan to pay · UPI</span>
+      <div class="qr-amount" id="amount">₹0.00</div>
+      <p class="hint" id="orderRefLine">Preparing your payment…</p>
+      <img id="qrImg" alt="UPI QR code" style="display:none">
+      <div class="pay-status" id="payStatus">
+        <span class="spinner"></span> Waiting for payment…
+      </div>
+      {% if is_simulated %}
+      <div style="margin-top:22px">
+        <button class="btn btn-ghost" id="simPayBtn" type="button">Simulate payment now</button>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="card qr-card" id="successView" style="display:none">
+      <div class="success-check">✓</div>
+      <h3 style="font-size:24px;margin:0 0 6px">Payment successful</h3>
+      <p class="hint" id="successRef"></p>
+      <p style="color:var(--muted)">A receipt has been sent to your email. Show it at the exit.</p>
+      <div style="display:grid;gap:10px;margin-top:20px">
+        <button class="btn btn-primary btn-block" id="printBillBtn" type="button">🖨 Print bill</button>
+        <p class="hint" id="printStatus" style="margin:0;min-height:18px"></p>
+        <a class="btn btn-ghost btn-block" id="viewReceiptBtn" href="#" target="_blank">View receipt</a>
+        <a class="btn btn-ghost btn-block" href="/">Done — new shopper</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.SIMULATION = {{ 'true' if is_simulated else 'false' }};
+  </script>
+  <script src="/static/js/checkout.js"></script>
+</body>
+</html>

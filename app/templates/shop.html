@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shopping · {{ settings.store_name }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span> {{ settings.store_name }}</div>
+    <div class="topbar-right">
+      <span class="badge badge-blue weight-badge" id="weightBadge">⚖ 0 g</span>
+      <span class="badge badge-blue" id="countBadge">🛒 0 items</span>
+      <span class="badge badge-warn" id="deviceBadge" style="display:none"
+            title="The trolley's load cell is not reporting">⚠ scale offline</span>
+      <button class="icon-btn" id="fullscreenBtn" type="button"
+              title="Fullscreen (F11)" aria-label="Toggle fullscreen">⛶</button>
+      <button class="icon-btn" id="settingsBtn" type="button"
+              title="Store settings" aria-label="Open store settings"
+              aria-haspopup="dialog">⚙</button>
+    </div>
+  </header>
+
+  <!-- keeps the USB barcode scanner (keyboard-wedge) focused at all times -->
+  <input id="scanInput" style="position:absolute;left:-9999px;opacity:0" autocomplete="off" autofocus
+         aria-hidden="true" tabindex="-1">
+
+  <div class="banner" id="mismatchBanner">
+    ⚠ Weight mismatch on a flagged item. Remove and re-scan it before checkout.
+  </div>
+
+  <main class="layout">
+    <div>
+      <div class="card card-pad">
+        <div class="scan-hero" id="scanHero">
+          <div class="pulse">⤿</div>
+          <div>
+            <div class="t">Scan a product barcode</div>
+            <div class="s">Point the scanner at the barcode, then drop the item in the basket.</div>
+          </div>
+        </div>
+
+        <h3>Your basket</h3>
+        <p class="hint">Items appear here as you scan. Re-scan or tap ✕ to remove.</p>
+        <ul class="items" id="itemsList"></ul>
+        <div class="empty" id="emptyState">Nothing scanned yet — scan your first product.</div>
+
+        <div class="devbar">
+          <span class="lbl">Manual / dev</span>
+          <input id="manualBarcode" placeholder="Type a barcode…" aria-label="Type a barcode" />
+          <button class="btn btn-ghost" id="manualScanBtn" type="button">Add</button>
+          <button class="btn btn-ghost" id="produceBtn" type="button">🍎 Weigh produce</button>
+          {% if is_simulated %}
+          <button class="btn btn-danger-ghost" id="theftBtn" type="button">Simulate theft</button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <aside>
+      <div class="card card-pad">
+        <h3>Bill summary</h3>
+        <p class="hint">GST included. Live total updates as you scan.</p>
+        <div class="summary-row"><span>Subtotal</span><span id="sumSubtotal">₹0.00</span></div>
+        <div class="summary-row"><span>Tax (5%)</span><span id="sumTax">₹0.00</span></div>
+        <div class="summary-total"><span>Total</span><span id="sumTotal">₹0.00</span></div>
+        <button class="btn btn-primary btn-block" id="checkoutBtn" style="margin-top:18px" disabled>
+          Checkout →
+        </button>
+      </div>
+    </aside>
+  </main>
+
+  <!-- produce modal -->
+  <div class="modal-back" id="produceModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Weigh loose produce">
+      <h3>Weigh loose produce</h3>
+      <p class="hint">Place the produce on the basket scale, then pick the item.</p>
+      <div class="produce-grid" id="produceGrid">
+        {% for p in produce %}
+        <button class="produce-btn" data-id="{{ p.id }}" data-name="{{ p.name }}"
+                data-ppk="{{ p.price_per_kg }}">
+          <div class="pn">{{ p.name }}</div>
+          <div class="pp">₹{{ '%.0f'|format(p.price_per_kg) }}/kg</div>
+        </button>
+        {% endfor %}
+      </div>
+      <button class="btn btn-ghost btn-block" id="produceClose" style="margin-top:16px">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ====================== STORE SETTINGS (staff) ====================== -->
+  <div class="modal-back" id="adminModal">
+    <div class="modal modal-lg" role="dialog" aria-modal="true" aria-label="Store settings">
+
+      <!-- PIN gate -->
+      <section id="adminLogin">
+        <div class="modal-head">
+          <h3>Store settings</h3>
+          <button class="icon-btn" data-admin-close type="button" aria-label="Close">✕</button>
+        </div>
+        <p class="hint">Staff only. Enter the store PIN to manage products and the scale.</p>
+        <div class="field">
+          <label for="adminPin">Store PIN</label>
+          <input id="adminPin" type="password" inputmode="numeric" autocomplete="off"
+                 placeholder="••••">
+        </div>
+        <div class="form-error" id="adminLoginErr"></div>
+        <button class="btn btn-primary btn-block" id="adminLoginBtn" type="button">Unlock</button>
+      </section>
+
+      <!-- Panel -->
+      <section id="adminPanel" style="display:none">
+        <div class="modal-head">
+          <h3>Store settings</h3>
+          <div class="modal-head-actions">
+            <span class="badge badge-blue" id="adminModeBadge">mode</span>
+            <button class="btn btn-ghost btn-sm" id="adminLogoutBtn" type="button">Lock</button>
+            <button class="icon-btn" data-admin-close type="button" aria-label="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="tabs" role="tablist">
+          <button class="tab is-active" data-tab="register" role="tab">➕ Add product</button>
+          <button class="tab" data-tab="lookup" role="tab">🔍 Look up</button>
+          <button class="tab" data-tab="scale" role="tab">⚖ Scale</button>
+          <button class="tab" data-tab="system" role="tab">🖥 System</button>
+        </div>
+
+        <!-- ---------- TAB: register a product ---------- -->
+        <div class="tab-body is-active" data-panel="register">
+          <p class="hint">
+            Scan the product's barcode, put one unit on the basket scale and tap
+            <b>Use scale weight</b>. That unit weight is what the anti-theft
+            check compares against, so capturing it here is more accurate than
+            reading the packet.
+          </p>
+
+          <div class="scan-catch" id="regScanCatch">
+            <label for="regBarcode">Barcode <span class="pill" id="regScanHint">ready to scan</span></label>
+            <div class="row">
+              <input id="regBarcode" placeholder="Scan or type a barcode…" autocomplete="off">
+              <button class="btn btn-ghost" id="regFindBtn" type="button">Find</button>
+            </div>
+            <div class="scan-note" id="regFoundNote"></div>
+          </div>
+
+          <div class="grid2">
+            <div class="field">
+              <label for="regName">Product name</label>
+              <input id="regName" placeholder="e.g. Maggi Noodles 70g">
+            </div>
+            <div class="field">
+              <label for="regCategory">Category</label>
+              <input id="regCategory" placeholder="Grocery" list="categoryList">
+              <datalist id="categoryList">
+                <option>Grocery</option><option>Snacks</option><option>Biscuits</option>
+                <option>Dairy</option><option>Beverages</option><option>Personal Care</option>
+                <option>Household</option><option>Produce</option>
+              </datalist>
+            </div>
+          </div>
+
+          <label class="check">
+            <input type="checkbox" id="regIsProduce">
+            <span>Loose produce — priced by weight (no fixed unit weight)</span>
+          </label>
+
+          <div class="grid2" id="regPackagedFields">
+            <div class="field">
+              <label for="regPrice">Price (₹ per unit)</label>
+              <input id="regPrice" type="number" step="0.01" min="0" placeholder="0.00">
+            </div>
+            <div class="field">
+              <label for="regStock">Stock quantity</label>
+              <input id="regStock" type="number" step="1" min="0" placeholder="0">
+            </div>
+            <div class="field">
+              <label for="regWeight">Unit weight (grams)</label>
+              <div class="row">
+                <input id="regWeight" type="number" step="0.1" min="0" placeholder="0.0">
+                <button class="btn btn-ghost btn-sm" id="regWeighBtn" type="button"
+                        title="Read the current basket weight">⚖ Use scale weight</button>
+              </div>
+              <div class="scan-note" id="regWeighNote">Live scale: <b id="regLiveWeight">—</b></div>
+            </div>
+            <div class="field">
+              <label for="regTolerance">Weight check</label>
+              <div class="static-note" id="regToleranceNote">—</div>
+            </div>
+          </div>
+
+          <div class="field" id="regProduceFields" style="display:none">
+            <label for="regPricePerKg">Price per kg (₹)</label>
+            <input id="regPricePerKg" type="number" step="0.01" min="0" placeholder="0.00">
+          </div>
+
+          <div class="form-error" id="regErr"></div>
+          <div class="row-end">
+            <button class="btn btn-ghost" id="regClearBtn" type="button">Clear</button>
+            <button class="btn btn-primary" id="regSaveBtn" type="button">Save product</button>
+          </div>
+        </div>
+
+        <!-- ---------- TAB: look up a product ---------- -->
+        <div class="tab-body" data-panel="lookup">
+          <p class="hint">Scan any product to see its price, stock and registered weight.</p>
+          <div class="scan-catch">
+            <label for="lookupBarcode">Scan or search <span class="pill" id="lookupScanHint">ready to scan</span></label>
+            <div class="row">
+              <input id="lookupBarcode" placeholder="Scan a barcode, or type a name…" autocomplete="off">
+              <button class="btn btn-ghost" id="lookupBtn" type="button">Search</button>
+            </div>
+          </div>
+          <div id="lookupResult"></div>
+          <div class="list-wrap">
+            <div class="list-head">
+              <span>Catalogue</span>
+              <span class="hint" id="catalogueCounts"></span>
+            </div>
+            <div id="productList" class="product-list"></div>
+          </div>
+        </div>
+
+        <!-- ---------- TAB: scale ---------- -->
+        <div class="tab-body" data-panel="scale">
+          <div class="stat-grid">
+            <div class="stat"><div class="k">Live weight</div><div class="v" id="scLiveGrams">—</div></div>
+            <div class="stat"><div class="k">Raw counts</div><div class="v" id="scRaw">—</div></div>
+            <div class="stat"><div class="k">Noise (σ)</div><div class="v" id="scNoise">—</div></div>
+            <div class="stat"><div class="k">Source</div><div class="v" id="scSource">—</div></div>
+          </div>
+          <div class="scale-status" id="scStatus"></div>
+
+          <h4>Zero the basket</h4>
+          <p class="hint">Empty the basket, then tare. This is saved, so it survives a restart.</p>
+          <button class="btn btn-ghost" id="scTareBtn" type="button">⊘ Tare (zero) now</button>
+
+          <h4 style="margin-top:22px">Calibrate (2-point)</h4>
+          <p class="hint">
+            Needed once per trolley, and after re-mounting the cells. Step 1 with
+            an empty basket, step 2 with a known reference weight.
+            For 4 × 50 kg cells a 1–5 kg reference gives the best accuracy.
+          </p>
+          <ol class="steps">
+            <li>
+              <div class="step-row">
+                <span>Empty basket → capture zero</span>
+                <button class="btn btn-ghost btn-sm" id="scZeroBtn" type="button">Capture zero</button>
+              </div>
+              <div class="scan-note" id="scZeroNote"></div>
+            </li>
+            <li>
+              <div class="step-row">
+                <input id="scKnownG" type="number" step="1" min="1" placeholder="Known weight in grams, e.g. 1000">
+                <button class="btn btn-primary btn-sm" id="scSpanBtn" type="button" disabled>Calibrate</button>
+              </div>
+              <div class="scan-note" id="scSpanNote"></div>
+            </li>
+          </ol>
+
+          <details class="advanced">
+            <summary>Enter calibration manually</summary>
+            <p class="hint">Paste the values printed by <code>python calibrate_scale.py calibrate</code>.</p>
+            <div class="grid2">
+              <div class="field">
+                <label for="scRefUnit">SCALE_REFERENCE_UNIT</label>
+                <input id="scRefUnit" type="number" step="any">
+              </div>
+              <div class="field">
+                <label for="scOffset">SCALE_OFFSET</label>
+                <input id="scOffset" type="number" step="any">
+              </div>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="scManualBtn" type="button">Save calibration</button>
+          </details>
+          <div class="form-error" id="scErr"></div>
+        </div>
+
+        <!-- ---------- TAB: system ---------- -->
+        <div class="tab-body" data-panel="system">
+          <h4>Display</h4>
+          <p class="hint">The shopper screen should run fullscreen with no browser chrome.</p>
+          <div class="row">
+            <button class="btn btn-ghost" id="sysFullscreenBtn" type="button">⛶ Toggle fullscreen</button>
+            <button class="btn btn-ghost" id="sysReloadBtn" type="button">⟳ Reload kiosk</button>
+          </div>
+
+          <h4 style="margin-top:22px">Diagnostics</h4>
+          <div id="sysDiag" class="diag">Loading…</div>
+          <button class="btn btn-ghost btn-sm" id="sysRefreshBtn" type="button">Refresh</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="toast-wrap" id="toasts"></div>
+  <div class="flash" id="flash" aria-hidden="true"></div>
+
+  <script>
+    window.TROLLEY = {
+      simulation: {{ 'true' if is_simulated else 'false' }},
+      mode: "{{ mode }}",
+      isCloud: {{ 'true' if is_cloud else 'false' }},
+      kiosk: {{ 'true' if kiosk else 'false' }},
+      beep: {{ 'true' if settings.ui_beep else 'false' }},
+      isAdmin: {{ 'true' if is_admin else 'false' }}
+    };
+    // back-compat for anything still reading the old flag
+    window.SIMULATION = window.TROLLEY.simulation;
+  </script>
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/admin.js"></script>
+</body>
+</html>

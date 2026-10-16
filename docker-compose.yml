@@ -1,0 +1,85 @@
+# Smart Trolley cloud stack.
+#
+#   caddy  ->  automatic HTTPS + WebSocket proxying
+#   app    ->  the FastAPI web app (single worker, see the Dockerfile note)
+#   db     ->  Postgres (swap for RDS in production by changing DATABASE_URL)
+#
+# Local test run (no TLS, hit http://localhost:8000 directly):
+#     docker compose up app db
+#
+# On an EC2 box with a DNS name pointed at it:
+#     export TROLLEY_DOMAIN=trolley.example.com ACME_EMAIL=you@example.com
+#     docker compose up -d
+#
+# Caddy fetches a real certificate for TROLLEY_DOMAIN automatically, which is
+# what makes wss:// work for the Pi agent and the browser weight feed.
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      HARDWARE_MODE: cloud
+      DATABASE_URL: postgresql+psycopg://trolley:${POSTGRES_PASSWORD:-trolley}@db:5432/trolley
+      # Required in cloud mode. Generate both: openssl rand -hex 32
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env or the environment}
+      DEVICE_TOKEN: ${DEVICE_TOKEN:?set DEVICE_TOKEN in .env or the environment}
+      ADMIN_PIN: ${ADMIN_PIN:-1234}
+      STORE_NAME: ${STORE_NAME:-Smart Mart}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-mock}
+      # The trolley browser should come up fullscreen.
+      KIOSK_MODE: "true"
+      KIOSK_URL: ${KIOSK_URL:-https://${TROLLEY_DOMAIN:-localhost}}
+      # With the trolley offline, refuse to fake weights in production.
+      ALLOW_SIM_FALLBACK: ${ALLOW_SIM_FALLBACK:-false}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Smart Mart <noreply@smartmart.local>}
+    volumes:
+      - receipts:/app/data/receipts
+    ports:
+      # Published for the "no TLS yet" case. Once Caddy is in front you can
+      # drop this line so only 80/443 are exposed.
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: trolley
+      POSTGRES_USER: trolley
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trolley}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trolley -d trolley"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      TROLLEY_DOMAIN: ${TROLLEY_DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  receipts:
+  caddydata:
+  caddyconfig:

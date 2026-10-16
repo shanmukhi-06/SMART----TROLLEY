@@ -1,0 +1,17 @@
+# Raspberry Pi 5 ONLY. Install on the Pi after requirements.txt:
+#   pip install -r requirements-hardware.txt
+#
+# The Pi 5 uses the new RP1 I/O controller, so the legacy RPi.GPIO stack does
+# NOT work reliably. We use lgpio (the modern, Pi-5-native GPIO library) and a
+# bit-banged HX711 driver built on top of it (see app/hardware/scale.py).
+#
+# Only two devices are wired to the trolley: the HX711 load-cell amplifier and
+# the camera. No buzzer, no LEDs — scan feedback happens on screen.
+
+lgpio==0.2.2.0                       # Pi 5 native GPIO access (replaces RPi.GPIO)
+opencv-python-headless==4.10.0.84    # camera capture for backup barcode scanning
+pyzbar==0.1.9                        # decode barcodes/QR from camera frames
+
+# System packages also required on the Pi (install with apt, not pip):
+#   sudo apt install -y libzbar0 chromium-browser unclutter
+# scripts/install-pi.sh does this for you.

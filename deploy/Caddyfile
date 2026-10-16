@@ -1,0 +1,44 @@
+# Caddy in front of the Smart Trolley app.
+#
+# Automatic HTTPS is ON by default for any public hostname, so there is no
+# certificate directive here at all. An ACME contact email is optional; to set
+# one, add a global options block above the site block:
+#
+#     {
+#         email you@example.com
+#     }
+#
+# Do not write a certificate directive that interpolates a possibly-empty
+# environment variable. If the variable is unset it collapses to a bare
+# directive and Caddy refuses to start with "wrong argument count". Note also
+# that the Caddyfile parser reads directive names and brace-dollar tokens even
+# when they appear inside comments, so keep both out of comment text.
+#
+# Both WebSocket paths are proxied transparently, no extra config needed:
+#     /ws         browser  <- live basket weight
+#     /ws/device  Pi agent <-> load-cell readings and commands
+
+{$TROLLEY_DOMAIN:localhost} {
+	encode zstd gzip
+
+	# Long-lived WebSockets: never cut the device stream off mid-shop.
+	reverse_proxy app:8000 {
+		header_up X-Real-IP {remote_host}
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy same-origin
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

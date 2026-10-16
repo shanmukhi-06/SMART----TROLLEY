@@ -1,0 +1,37 @@
+# --- Core web app (cloud, Pi, or laptop) ---
+# Version ranges chosen to provide prebuilt wheels on Python 3.10 - 3.13.
+fastapi>=0.111,<1.0
+uvicorn[standard]>=0.30,<1.0
+jinja2>=3.1,<4.0
+python-multipart>=0.0.9
+pydantic>=2.9,<3.0
+pydantic-settings>=2.5,<3.0
+SQLAlchemy>=2.0.35,<3.0
+python-dotenv>=1.0,<2.0
+
+# --- WebSocket client, used by pi_agent.py to reach the cloud ---
+# (uvicorn[standard] already brings the server side of this)
+websockets>=12.0,<16.0
+
+# --- Postgres / RDS driver. Only used when DATABASE_URL is postgresql+psycopg://
+# SQLite needs nothing extra, so this is harmless on a laptop.
+psycopg[binary]>=3.2,<4.0
+
+# --- QR / receipts ---
+qrcode[pil]>=7.4.2,<8.0
+Pillow>=10.4,<12.0
+
+# --- Payments (PhonePe uses plain HTTP + crypto) ---
+requests>=2.32,<3.0
+
+# ---------------------------------------------------------------------------
+# HARDWARE-ONLY dependencies are in requirements-hardware.txt and are installed
+# ONLY on the Raspberry Pi. `pip install -r requirements.txt` works anywhere
+# (cloud container or laptop) and is enough for simulation mode.
+# ---------------------------------------------------------------------------
+
+# --- Thermal printer (USB / BT / network / remote) ---
+python-escpos>=3.1,<4.0
+pyserial>=3.5,<4.0
+bleak>=0.22,<1.0
+netifaces2>=0.0.22

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ settings.store_name }} · Smart Trolley</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <button class="icon-btn corner-btn" id="fullscreenBtn" type="button"
+          title="Fullscreen" aria-label="Toggle fullscreen">⛶</button>
+
+  <div class="auth-wrap">
+    <section class="auth-hero">
+      <h1>{{ settings.store_name }}<br>Smart Trolley</h1>
+      <p>{{ settings.store_tagline }} Scan as you shop, pay right at the cart, and skip the checkout queue.</p>
+      <div class="auth-steps">
+        <div class="auth-step"><span class="n">1</span> Enter your mobile &amp; email</div>
+        <div class="auth-step"><span class="n">2</span> Scan products into the basket</div>
+        <div class="auth-step"><span class="n">3</span> Pay by UPI &amp; get your receipt</div>
+      </div>
+    </section>
+
+    <section class="auth-card-side">
+      <div class="auth-card">
+        <h2>Start shopping</h2>
+        <p class="sub">We’ll send your receipt to these details.</p>
+        <form id="startForm">
+          <div class="field">
+            <label for="mobile">Mobile number</label>
+            <input id="mobile" name="mobile" type="tel" inputmode="numeric"
+                   placeholder="10-digit mobile" autocomplete="tel" required>
+          </div>
+          <div class="field">
+            <label for="email">Email address</label>
+            <input id="email" name="email" type="email"
+                   placeholder="you@example.com" autocomplete="email" required>
+          </div>
+          <div class="form-error" id="err"></div>
+          <button class="btn btn-primary btn-block" type="submit" id="startBtn">
+            Start shopping →
+          </button>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // ---- fullscreen / kiosk -------------------------------------------
+    const KIOSK = {{ 'true' if kiosk else 'false' }};
+    const fsBtn = document.getElementById('fullscreenBtn');
+    const isFs = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+    async function toggleFs() {
+      try {
+        if (isFs()) await (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+        else {
+          const el = document.documentElement;
+          await (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+        }
+      } catch (_) {}
+      fsBtn.textContent = isFs() ? '⤡' : '⛶';
+    }
+    fsBtn.addEventListener('click', toggleFs);
+    document.addEventListener('fullscreenchange', () => {
+      fsBtn.textContent = isFs() ? '⤡' : '⛶';
+    });
+    if (KIOSK) {
+      document.body.classList.add('kiosk');
+      const arm = () => { if (!isFs()) toggleFs(); };
+      document.addEventListener('pointerdown', arm, { once: true });
+      document.addEventListener('keydown', arm, { once: true });
+    }
+
+    const form = document.getElementById('startForm');
+    const err = document.getElementById('err');
+    const btn = document.getElementById('startBtn');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      btn.disabled = true; btn.textContent = 'Starting…';
+      const mobile = document.getElementById('mobile').value.trim();
+      const email = document.getElementById('email').value.trim();
+      try {
+        const res = await fetch('/api/session/start', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mobile, email })
+        });
+        const data = await res.json();
+        if (data.ok) { window.location = data.redirect; }
+        else { err.textContent = data.error || 'Could not start session.'; }
+      } catch (_) { err.textContent = 'Network error. Try again.'; }
+      btn.disabled = false; btn.textContent = 'Start shopping →';
+    });
+  </script>
+</body>
+</html>

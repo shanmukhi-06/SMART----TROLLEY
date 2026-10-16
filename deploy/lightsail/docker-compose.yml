@@ -1,0 +1,71 @@
+# Smart Trolley on a $5 Lightsail nano instance.
+#
+# Differences from the root docker-compose.yml:
+#   * SQLite instead of a Postgres container. One trolley means one writer, and
+#     the app already runs a single uvicorn worker, so there is no concurrency
+#     argument for Postgres here. It also frees ~150 MB of RAM, which is what
+#     makes the 512 MB nano box viable.
+#   * Caddy gets its hostname from sslip.io, so you get a real Let's Encrypt
+#     certificate against the instance's static IP with no domain purchase.
+#
+# Usage on the instance:
+#     cd /opt/trolley && docker compose -f deploy/lightsail/docker-compose.yml up -d
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: smart-trolley:latest
+    restart: unless-stopped
+    environment:
+      HARDWARE_MODE: cloud
+      # 4 slashes = absolute path. Lives on the mounted volume so it survives
+      # rebuilds and shows up in Lightsail snapshots.
+      DATABASE_URL: sqlite:////app/data/smart_trolley.db
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      DEVICE_TOKEN: ${DEVICE_TOKEN:?set DEVICE_TOKEN in .env}
+      ADMIN_PIN: ${ADMIN_PIN:-1234}
+      STORE_NAME: ${STORE_NAME:-Smart Mart}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-mock}
+      KIOSK_MODE: "true"
+      KIOSK_URL: ${PUBLIC_URL:-http://localhost:8000}
+      # A disconnected trolley must NOT silently fake weights in a real store.
+      ALLOW_SIM_FALLBACK: "false"
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Smart Mart <noreply@smartmart.local>}
+    volumes:
+      - trolleydata:/app/data
+    expose:
+      - "8000"
+    # Keep a lid on memory so a leak can't take the whole box down.
+    deploy:
+      resources:
+        limits:
+          memory: 320M
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # e.g. 13-234-56-78.sslip.io  (resolves to 13.234.56.78)
+      TROLLEY_DOMAIN: ${TROLLEY_DOMAIN:?set TROLLEY_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ../Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - app
+
+volumes:
+  trolleydata:
+  caddydata:
+  caddyconfig:

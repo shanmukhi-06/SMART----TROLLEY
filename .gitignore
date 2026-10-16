@@ -1,0 +1,33 @@
+# Environment / secrets
+.env
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated receipts
+data/receipts/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# OS
+.DS_Store
+
+# Local cheat-sheet containing live secrets — never commit
+deploy/PI_COMMANDS.md
+
+# Testing cache
+.pytest_cache/
+
+# Unrelated directories & JARs
+reverse-skill/
+lib/
+*.jar
+
